@@ -77,13 +77,23 @@ template<
        Node *x = y->left;
        Node *T2 = x->right;
 
+       // Update parents
+       x->parent = y->parent;
+       if (y->parent != nullptr) {
+           if (y == y->parent->left)
+               y->parent->left = x;
+           else
+               y->parent->right = x;
+       }
+       y->parent = x;
+       if (T2 != nullptr)
+           T2->parent = y;
+
+       // Rotate
        x->right = y;
        y->left = T2;
 
-       if (T2) T2->parent = y;
-       x->parent = y->parent;
-       y->parent = x;
-
+       // Update heights
        updateHeight(y);
        updateHeight(x);
 
@@ -94,13 +104,23 @@ template<
        Node *y = x->right;
        Node *T2 = y->left;
 
+       // Update parents
+       y->parent = x->parent;
+       if (x->parent != nullptr) {
+           if (x == x->parent->left)
+               x->parent->left = y;
+           else
+               x->parent->right = y;
+       }
+       x->parent = y;
+       if (T2 != nullptr)
+           T2->parent = x;
+
+       // Rotate
        y->left = x;
        x->right = T2;
 
-       if (T2) T2->parent = x;
-       y->parent = x->parent;
-       x->parent = y;
-
+       // Update heights
        updateHeight(x);
        updateHeight(y);
 
@@ -147,15 +167,15 @@ template<
    }
 
    Node *findNode(const Key &key, Node *node) const {
-       if (node == nullptr)
-           return nullptr;
-
-       if (comp(key, node->data->first))
-           return findNode(key, node->left);
-       else if (comp(node->data->first, key))
-           return findNode(key, node->right);
-       else
-           return node;
+       while (node != nullptr) {
+           if (comp(key, node->data->first))
+               node = node->left;
+           else if (comp(node->data->first, key))
+               node = node->right;
+           else
+               return node;
+       }
+       return nullptr;
    }
 
    Node *insertHelper(Node *node, const value_type &val, Node *parent, bool &inserted) {
@@ -177,45 +197,50 @@ template<
        return rebalance(node);
    }
 
-   Node *removeHelper(Node *node, const Key &key, bool &removed) {
+   Node *removeNode(Node *node, const Key &key, bool &removed, bool decrementSize = true) {
        if (node == nullptr)
            return nullptr;
 
        if (comp(key, node->data->first)) {
-           node->left = removeHelper(node->left, key, removed);
+           node->left = removeNode(node->left, key, removed, decrementSize);
+           if (node->left) node->left->parent = node;
        } else if (comp(node->data->first, key)) {
-           node->right = removeHelper(node->right, key, removed);
+           node->right = removeNode(node->right, key, removed, decrementSize);
+           if (node->right) node->right->parent = node;
        } else {
-           removed = true;
+           if (decrementSize) {
+               removed = true;
+               _size--;
+           }
 
            if (node->left == nullptr || node->right == nullptr) {
-               _size--;
                Node *temp = node->left ? node->left : node->right;
 
                if (temp == nullptr) {
-                   temp = node;
-                   node = nullptr;
+                   // No children
+                   delete node;
+                   return nullptr;
                } else {
-                   *node = *temp;
-                   node->data = temp->data;
-                   temp->data = nullptr;
+                   // One child
+                   Node *parent = node->parent;
+                   temp->parent = parent;
+                   delete node;
+                   return temp;
                }
-               delete temp;
            } else {
+               // Two children: get inorder successor
                Node *temp = findMin(node->right);
 
-               // Move data instead of copying (to avoid T assignment issues)
+               // Swap data pointers
                value_type *tempData = node->data;
                node->data = temp->data;
                temp->data = tempData;
 
-               bool dummyRemoved = false;
-               node->right = removeHelper(node->right, temp->data->first, dummyRemoved);
+               // Remove the successor (don't decrement size again)
+               node->right = removeNode(node->right, temp->data->first, removed, false);
+               if (node->right) node->right->parent = node;
            }
        }
-
-       if (node == nullptr)
-           return nullptr;
 
        return rebalance(node);
    }
@@ -239,14 +264,6 @@ template<
        return newNode;
    }
 
-   void updateSentinel() {
-       if (root) {
-           sentinel->parent = findMax(root);
-       } else {
-           sentinel->parent = nullptr;
-       }
-   }
-
   public:
    /**
    * see BidirectionalIterator at CppReference for help.
@@ -265,7 +282,7 @@ template<
        friend class const_iterator;
 
        bool isSentinel() const {
-           return node && node->data == nullptr;
+           return node == container->sentinel;
        }
 
       public:
@@ -297,15 +314,15 @@ template<
            if (node->right != nullptr) {
                node = container->findMin(node->right);
            } else {
-               Node *parent = node->parent;
-               while (parent != nullptr && node == parent->right) {
-                   node = parent;
-                   parent = parent->parent;
+               Node *p = node->parent;
+               while (p != nullptr && node == p->right) {
+                   node = p;
+                   p = p->parent;
                }
-               if (parent == nullptr) {
+               if (p == nullptr) {
                    node = container->sentinel;
                } else {
-                   node = parent;
+                   node = p;
                }
            }
            return *this;
@@ -334,14 +351,14 @@ template<
            } else if (node->left != nullptr) {
                node = container->findMax(node->left);
            } else {
-               Node *parent = node->parent;
-               while (parent != nullptr && node == parent->left) {
-                   node = parent;
-                   parent = parent->parent;
+               Node *p = node->parent;
+               while (p != nullptr && node == p->left) {
+                   node = p;
+                   p = p->parent;
                }
-               if (parent == nullptr)
+               if (p == nullptr)
                    throw invalid_iterator();
-               node = parent;
+               node = p;
            }
            return *this;
        }
@@ -394,7 +411,7 @@ template<
        friend class iterator;
 
        bool isSentinel() const {
-           return node && node->data == nullptr;
+           return node == container->sentinel;
        }
 
       public:
@@ -422,15 +439,15 @@ template<
            if (node->right != nullptr) {
                node = container->findMin(node->right);
            } else {
-               Node *parent = node->parent;
-               while (parent != nullptr && node == parent->right) {
-                   node = parent;
-                   parent = parent->parent;
+               Node *p = node->parent;
+               while (p != nullptr && node == p->right) {
+                   node = p;
+                   p = p->parent;
                }
-               if (parent == nullptr) {
+               if (p == nullptr) {
                    node = container->sentinel;
                } else {
-                   node = parent;
+                   node = p;
                }
            }
            return *this;
@@ -453,14 +470,14 @@ template<
            } else if (node->left != nullptr) {
                node = container->findMax(node->left);
            } else {
-               Node *parent = node->parent;
-               while (parent != nullptr && node == parent->left) {
-                   node = parent;
-                   parent = parent->parent;
+               Node *p = node->parent;
+               while (p != nullptr && node == p->left) {
+                   node = p;
+                   p = p->parent;
                }
-               if (parent == nullptr)
+               if (p == nullptr)
                    throw invalid_iterator();
-               node = parent;
+               node = p;
            }
            return *this;
        }
@@ -500,15 +517,12 @@ template<
     */
    map() : root(nullptr), _size(0) {
        sentinel = new Node();
-       sentinel->height = 0;
    }
 
    map(const map &other) : root(nullptr), _size(0) {
        sentinel = new Node();
-       sentinel->height = 0;
        root = copyTree(other.root, nullptr);
        _size = other._size;
-       updateSentinel();
    }
 
    /**
@@ -522,7 +536,6 @@ template<
        destroyTree(root);
        root = copyTree(other.root, nullptr);
        _size = other._size;
-       updateSentinel();
        return *this;
    }
 
@@ -563,11 +576,9 @@ template<
    T &operator[](const Key &key) {
        Node *node = findNode(key, root);
        if (node == nullptr) {
-           value_type val(key, T());
-           bool inserted = false;
-           root = insertHelper(root, val, nullptr, inserted);
-           updateSentinel();
-           node = findNode(key, root);
+           // Use insert to create the element
+           auto result = insert(value_type(key, T()));
+           return result.first->second;
        }
        return node->data->second;
    }
@@ -628,7 +639,6 @@ template<
        destroyTree(root);
        root = nullptr;
        _size = 0;
-       updateSentinel();
    }
 
    /**
@@ -645,7 +655,10 @@ template<
 
        bool inserted = false;
        root = insertHelper(root, value, nullptr, inserted);
-       updateSentinel();
+
+       // Update root's parent if root changed
+       if (root != nullptr)
+           root->parent = nullptr;
 
        Node *newNode = findNode(value.first, root);
        return pair<iterator, bool>(iterator(newNode, this), inserted);
@@ -657,7 +670,7 @@ template<
    * throw if pos pointed to a bad element (pos == this->end() || pos points an element out of this)
     */
    void erase(iterator pos) {
-       if (pos.node == nullptr || pos.node->data == nullptr || pos.container != this)
+       if (pos.node == nullptr || pos.node == sentinel || pos.container != this)
            throw invalid_iterator();
 
        // Verify the node is actually in this map
@@ -666,8 +679,11 @@ template<
            throw invalid_iterator();
 
        bool removed = false;
-       root = removeHelper(root, pos.node->data->first, removed);
-       updateSentinel();
+       root = removeNode(root, pos.node->data->first, removed);
+
+       // Update root's parent if root changed
+       if (root != nullptr)
+           root->parent = nullptr;
    }
 
    /**
